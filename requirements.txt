@@ -1,0 +1,10 @@
+numpy
+torch==1.11.0
+datasets
+git+https://github.com/huggingface/diffusers
+transformers
+accelerate
+torchvision
+pillow
+matplotlib
+wandb
