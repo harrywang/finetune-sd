@@ -1,1 +1,1 @@
-the fine-tuned models are saved here.
+test generated images are here
