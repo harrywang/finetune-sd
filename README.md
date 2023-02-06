@@ -1,6 +1,6 @@
 # About
 
-Code for my tutorial [Fine-tune Stable Diffusion using LoRA and Your Own Images](https://harrywang.me/lora).
+Code for my tutorial [Fine-tune Stable Diffusion](https://harrywang.me/finetune-sd).
 
 I copied the training scripts from the following repos and will periodically update them to the latest:
 
@@ -206,17 +206,15 @@ accelerate launch train_dreambooth_lora.py \
 generate images using LoRA weights:
 
 ```
-python generate-images.py --prompt "a dog standing on the great wall" --model_path "./models/dreambooth-lora/dog" --output_folder "./outputs" --steps 50
-
-python generate-images.py --prompt "a sks dog standing on the great wall" --model_path "./models/dreambooth-lora/dog" --output_folder "./outputs"
-
+python generate-lora.py --prompt "a dog standing on the great wall" --model_path "./models/dreambooth-lora/dog" --output_folder "./outputs" --steps 50
+python generate-lora.py --prompt "a sks dog standing on the great wall" --model_path "./models/dreambooth-lora/dog" --output_folder "./outputs"
 ```
 
 ## Dreambooth
 
 See [blog](https://huggingface.co/blog/dreambooth) and [docs](https://github.com/huggingface/diffusers/tree/main/examples/dreambooth)
 
-Dog example without prior-preservation loss:
+Dog example without prior-preservation loss (~7 mins on V100):
 
 ```
 export MODEL_NAME="runwayml/stable-diffusion-v1-5"
@@ -239,3 +237,11 @@ accelerate launch train_dreambooth.py \
 ```
 
 TODO: Dog example with prior-preservation loss
+
+generate images using Dreambooth models:
+
+```
+python generate-dreambooth.py --prompt "a dog standing on the great wall" --model_path "./models/dreambooth/dog" --output_folder "./outputs" --steps 50
+python generate-dreambooth.py --prompt "a sks dog standing on the great wall" --model_path "./models/dreambooth/dog" --output_folder "./outputs/dreambooth"
+python generate-dreambooth.py --prompt "a sks dog swimming"
+```
