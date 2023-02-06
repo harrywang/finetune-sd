@@ -15,6 +15,7 @@
 
 import argparse
 import hashlib
+import itertools
 import logging
 import math
 import os
@@ -22,7 +23,6 @@ import warnings
 from pathlib import Path
 from typing import Optional
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.utils.checkpoint
@@ -34,17 +34,9 @@ import transformers
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
-from diffusers import (
-    AutoencoderKL,
-    DDPMScheduler,
-    DiffusionPipeline,
-    DPMSolverMultistepScheduler,
-    UNet2DConditionModel,
-)
-from diffusers.loaders import AttnProcsLayers
-from diffusers.models.cross_attention import LoRACrossAttnProcessor
+from diffusers import AutoencoderKL, DDPMScheduler, DiffusionPipeline, UNet2DConditionModel
 from diffusers.optimization import get_scheduler
-from diffusers.utils import check_min_version, is_wandb_available
+from diffusers.utils import check_min_version
 from diffusers.utils.import_utils import is_xformers_available
 from huggingface_hub import HfFolder, Repository, create_repo, whoami
 from PIL import Image
@@ -57,36 +49,6 @@ from transformers import AutoTokenizer, PretrainedConfig
 check_min_version("0.13.0.dev0")
 
 logger = get_logger(__name__)
-
-
-def save_model_card(repo_name, images=None, base_model=str, prompt=str, repo_folder=None):
-    img_str = ""
-    for i, image in enumerate(images):
-        image.save(os.path.join(repo_folder, f"image_{i}.png"))
-        img_str += f"![img_{i}](./image_{i}.png)\n"
-
-    yaml = f"""
----
-license: creativeml-openrail-m
-base_model: {base_model}
-instance_prompt: {prompt}
-tags:
-- stable-diffusion
-- stable-diffusion-diffusers
-- text-to-image
-- diffusers
-- lora
-inference: true
----
-    """
-    model_card = f"""
-# LoRA DreamBooth - {repo_name}
-
-These are LoRA adaption weights for {base_model}. The weights were trained on {prompt} using [DreamBooth](https://dreambooth.github.io/). You can find some example images in the following. \n
-{img_str}
-"""
-    with open(os.path.join(repo_folder, "README.md"), "w") as f:
-        f.write(yaml + model_card)
 
 
 def import_model_class_from_model_name_or_path(pretrained_model_name_or_path: str, revision: str):
@@ -123,7 +85,10 @@ def parse_args(input_args=None):
         type=str,
         default=None,
         required=False,
-        help="Revision of pretrained model identifier from huggingface.co/models.",
+        help=(
+            "Revision of pretrained model identifier from huggingface.co/models. Trainable model components should be"
+            " float32 precision."
+        ),
     )
     parser.add_argument(
         "--tokenizer_name",
@@ -159,27 +124,6 @@ def parse_args(input_args=None):
         help="The prompt to specify images in the same class as provided instance images.",
     )
     parser.add_argument(
-        "--validation_prompt",
-        type=str,
-        default=None,
-        help="A prompt that is used during validation to verify that the model is learning.",
-    )
-    parser.add_argument(
-        "--num_validation_images",
-        type=int,
-        default=4,
-        help="Number of images that should be generated during validation with `validation_prompt`.",
-    )
-    parser.add_argument(
-        "--validation_epochs",
-        type=int,
-        default=50,
-        help=(
-            "Run dreambooth validation every X epochs. Dreambooth validation consists of running the prompt"
-            " `args.validation_prompt` multiple times: `args.num_validation_images`."
-        ),
-    )
-    parser.add_argument(
         "--with_prior_preservation",
         default=False,
         action="store_true",
@@ -198,7 +142,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="lora-dreambooth-model",
+        default="text-inversion-model",
         help="The output directory where the model predictions and checkpoints will be written.",
     )
     parser.add_argument("--seed", type=int, default=None, help="A seed for reproducible training.")
@@ -219,6 +163,11 @@ def parse_args(input_args=None):
             "Whether to center crop the input images to the resolution. If not set, the images will be randomly"
             " cropped. The images will be resized to the resolution first before cropping."
         ),
+    )
+    parser.add_argument(
+        "--train_text_encoder",
+        action="store_true",
+        help="Whether to train the text encoder. If set, the text encoder should be float32 precision.",
     )
     parser.add_argument(
         "--train_batch_size", type=int, default=4, help="Batch size (per device) for the training dataloader."
@@ -266,7 +215,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=5e-4,
+        default=5e-6,
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
@@ -295,15 +244,15 @@ def parse_args(input_args=None):
     )
     parser.add_argument("--lr_power", type=float, default=1.0, help="Power factor of the polynomial scheduler.")
     parser.add_argument(
+        "--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes."
+    )
+    parser.add_argument(
         "--dataloader_num_workers",
         type=int,
         default=0,
         help=(
             "Number of subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
         ),
-    )
-    parser.add_argument(
-        "--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes."
     )
     parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
     parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
@@ -369,6 +318,15 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--enable_xformers_memory_efficient_attention", action="store_true", help="Whether or not to use xformers."
     )
+    parser.add_argument(
+        "--set_grads_to_none",
+        action="store_true",
+        help=(
+            "Save more memory by using setting grads to None instead of zero. Be aware, that this changes certain"
+            " behaviors, so disable this argument if it causes any problems. More info:"
+            " https://pytorch.org/docs/stable/generated/torch.optim.Optimizer.zero_grad.html"
+        ),
+    )
 
     if input_args is not None:
         args = parser.parse_args(input_args)
@@ -416,7 +374,7 @@ class DreamBoothDataset(Dataset):
 
         self.instance_data_root = Path(instance_data_root)
         if not self.instance_data_root.exists():
-            raise ValueError("Instance images root doesn't exists.")
+            raise ValueError(f"Instance {self.instance_data_root} images root doesn't exists.")
 
         self.instance_images_path = list(Path(instance_data_root).iterdir())
         self.num_instance_images = len(self.instance_images_path)
@@ -534,14 +492,15 @@ def main(args):
         logging_dir=logging_dir,
     )
 
-    if args.report_to == "wandb":
-        if not is_wandb_available():
-            raise ImportError("Make sure to install wandb if you want to use it for logging during training.")
-        import wandb
-
     # Currently, it's not possible to do gradient accumulation when training two models with accelerate.accumulate
     # This will be enabled soon in accelerate. For now, we don't allow gradient accumulation when training two models.
     # TODO (patil-suraj): Remove this check when gradient accumulation with two models is enabled in accelerate.
+    if args.train_text_encoder and args.gradient_accumulation_steps > 1 and accelerator.num_processes > 1:
+        raise ValueError(
+            "Gradient accumulation is not supported when training the text encoder in distributed training. "
+            "Please set gradient_accumulation_steps to 1. This feature will be supported in the future."
+        )
+
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -615,7 +574,6 @@ def main(args):
                 repo_name = get_full_repo_name(Path(args.output_dir).name, token=args.hub_token)
             else:
                 repo_name = args.hub_model_id
-
             create_repo(repo_name, exist_ok=True, token=args.hub_token)
             repo = Repository(args.output_dir, clone_from=repo_name, token=args.hub_token)
 
@@ -651,23 +609,9 @@ def main(args):
         args.pretrained_model_name_or_path, subfolder="unet", revision=args.revision
     )
 
-    # We only train the additional adapter LoRA layers
     vae.requires_grad_(False)
-    text_encoder.requires_grad_(False)
-    unet.requires_grad_(False)
-
-    # For mixed precision training we cast the text_encoder and vae weights to half-precision
-    # as these models are only used for inference, keeping weights in full precision is not required.
-    weight_dtype = torch.float32
-    if accelerator.mixed_precision == "fp16":
-        weight_dtype = torch.float16
-    elif accelerator.mixed_precision == "bf16":
-        weight_dtype = torch.bfloat16
-
-    # Move unet, vae and text_encoder to device and cast to weight_dtype
-    unet.to(accelerator.device, dtype=weight_dtype)
-    vae.to(accelerator.device, dtype=weight_dtype)
-    text_encoder.to(accelerator.device, dtype=weight_dtype)
+    if not args.train_text_encoder:
+        text_encoder.requires_grad_(False)
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -675,44 +619,26 @@ def main(args):
         else:
             raise ValueError("xformers is not available. Make sure it is installed correctly")
 
-    # now we will add new LoRA weights to the attention layers
-    # It's important to realize here how many attention weights will be added and of which sizes
-    # The sizes of the attention layers consist only of two different variables:
-    # 1) - the "hidden_size", which is increased according to `unet.config.block_out_channels`.
-    # 2) - the "cross attention size", which is set to `unet.config.cross_attention_dim`.
+    if args.gradient_checkpointing:
+        unet.enable_gradient_checkpointing()
+        if args.train_text_encoder:
+            text_encoder.gradient_checkpointing_enable()
 
-    # Let's first see how many attention processors we will have to set.
-    # For Stable Diffusion, it should be equal to:
-    # - down blocks (2x attention layers) * (2x transformer layers) * (3x down blocks) = 12
-    # - mid blocks (2x attention layers) * (1x transformer layers) * (1x mid blocks) = 2
-    # - up blocks (2x attention layers) * (3x transformer layers) * (3x down blocks) = 18
-    # => 32 layers
+    # Check that all trainable models are in full precision
+    low_precision_error_string = (
+        "Please make sure to always have all model weights in full float32 precision when starting training - even if"
+        " doing mixed precision training. copy of the weights should still be float32."
+    )
 
-    # Set correct lora layers
-    lora_attn_procs = {}
-    for name in unet.attn_processors.keys():
-        cross_attention_dim = None if name.endswith("attn1.processor") else unet.config.cross_attention_dim
-        if name.startswith("mid_block"):
-            hidden_size = unet.config.block_out_channels[-1]
-        elif name.startswith("up_blocks"):
-            block_id = int(name[len("up_blocks.")])
-            hidden_size = list(reversed(unet.config.block_out_channels))[block_id]
-        elif name.startswith("down_blocks"):
-            block_id = int(name[len("down_blocks.")])
-            hidden_size = unet.config.block_out_channels[block_id]
-
-        lora_attn_procs[name] = LoRACrossAttnProcessor(
-            hidden_size=hidden_size, cross_attention_dim=cross_attention_dim
+    if accelerator.unwrap_model(unet).dtype != torch.float32:
+        raise ValueError(
+            f"Unet loaded as datatype {accelerator.unwrap_model(unet).dtype}. {low_precision_error_string}"
         )
 
-    unet.set_attn_processor(lora_attn_procs)
-    lora_layers = AttnProcsLayers(unet.attn_processors)
-
-    accelerator.register_for_checkpointing(lora_layers)
-
-    if args.scale_lr:
-        args.learning_rate = (
-            args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
+    if args.train_text_encoder and accelerator.unwrap_model(text_encoder).dtype != torch.float32:
+        raise ValueError(
+            f"Text encoder loaded as datatype {accelerator.unwrap_model(text_encoder).dtype}."
+            f" {low_precision_error_string}"
         )
 
     # Enable TF32 for faster training on Ampere GPUs,
@@ -739,8 +665,11 @@ def main(args):
         optimizer_class = torch.optim.AdamW
 
     # Optimizer creation
+    params_to_optimize = (
+        itertools.chain(unet.parameters(), text_encoder.parameters()) if args.train_text_encoder else unet.parameters()
+    )
     optimizer = optimizer_class(
-        lora_layers.parameters(),
+        params_to_optimize,
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
         weight_decay=args.adam_weight_decay,
@@ -783,9 +712,27 @@ def main(args):
     )
 
     # Prepare everything with our `accelerator`.
-    lora_layers, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        lora_layers, optimizer, train_dataloader, lr_scheduler
-    )
+    if args.train_text_encoder:
+        unet, text_encoder, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+            unet, text_encoder, optimizer, train_dataloader, lr_scheduler
+        )
+    else:
+        unet, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
+            unet, optimizer, train_dataloader, lr_scheduler
+        )
+
+    # For mixed precision training we cast the text_encoder and vae weights to half-precision
+    # as these models are only used for inference, keeping weights in full precision is not required.
+    weight_dtype = torch.float32
+    if accelerator.mixed_precision == "fp16":
+        weight_dtype = torch.float16
+    elif accelerator.mixed_precision == "bf16":
+        weight_dtype = torch.bfloat16
+
+    # Move vae and text_encoder to device and cast to weight_dtype
+    vae.to(accelerator.device, dtype=weight_dtype)
+    if not args.train_text_encoder:
+        text_encoder.to(accelerator.device, dtype=weight_dtype)
 
     # We need to recalculate our total training steps as the size of the training dataloader may have changed.
     num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
@@ -797,7 +744,7 @@ def main(args):
     # We need to initialize the trackers we use, and also store our configuration.
     # The trackers initializes automatically on the main process.
     if accelerator.is_main_process:
-        accelerator.init_trackers("dreambooth-lora", config=vars(args))
+        accelerator.init_trackers("dreambooth", config=vars(args))
 
     # Train!
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
@@ -844,6 +791,8 @@ def main(args):
 
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train()
+        if args.train_text_encoder:
+            text_encoder.train()
         for step, batch in enumerate(train_dataloader):
             # Skip steps until we reach the resumed step
             if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
@@ -899,11 +848,15 @@ def main(args):
 
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
-                    params_to_clip = lora_layers.parameters()
+                    params_to_clip = (
+                        itertools.chain(unet.parameters(), text_encoder.parameters())
+                        if args.train_text_encoder
+                        else unet.parameters()
+                    )
                     accelerator.clip_grad_norm_(params_to_clip, args.max_grad_norm)
                 optimizer.step()
                 lr_scheduler.step()
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
@@ -923,95 +876,18 @@ def main(args):
             if global_step >= args.max_train_steps:
                 break
 
-        if accelerator.is_main_process:
-            if args.validation_prompt is not None and epoch % args.validation_epochs == 0:
-                logger.info(
-                    f"Running validation... \n Generating {args.num_validation_images} images with prompt:"
-                    f" {args.validation_prompt}."
-                )
-                # create pipeline
-                pipeline = DiffusionPipeline.from_pretrained(
-                    args.pretrained_model_name_or_path,
-                    unet=accelerator.unwrap_model(unet),
-                    text_encoder=accelerator.unwrap_model(text_encoder),
-                    revision=args.revision,
-                    torch_dtype=weight_dtype,
-                )
-                pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
-                pipeline = pipeline.to(accelerator.device)
-                pipeline.set_progress_bar_config(disable=True)
-
-                # run inference
-                generator = torch.Generator(device=accelerator.device).manual_seed(args.seed)
-                images = [
-                    pipeline(args.validation_prompt, num_inference_steps=25, generator=generator).images[0]
-                    for _ in range(args.num_validation_images)
-                ]
-
-                for tracker in accelerator.trackers:
-                    if tracker.name == "tensorboard":
-                        np_images = np.stack([np.asarray(img) for img in images])
-                        tracker.writer.add_images("validation", np_images, epoch, dataformats="NHWC")
-                    if tracker.name == "wandb":
-                        tracker.log(
-                            {
-                                "validation": [
-                                    wandb.Image(image, caption=f"{i}: {args.validation_prompt}")
-                                    for i, image in enumerate(images)
-                                ]
-                            }
-                        )
-
-                del pipeline
-                torch.cuda.empty_cache()
-
-    # Save the lora layers
+    # Create the pipeline using using the trained modules and save it.
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        unet = unet.to(torch.float32)
-        unet.save_attn_procs(args.output_dir)
-
-        # Final inference
-        # Load previous pipeline
         pipeline = DiffusionPipeline.from_pretrained(
-            args.pretrained_model_name_or_path, revision=args.revision, torch_dtype=weight_dtype
+            args.pretrained_model_name_or_path,
+            unet=accelerator.unwrap_model(unet),
+            text_encoder=accelerator.unwrap_model(text_encoder),
+            revision=args.revision,
         )
-        pipeline.scheduler = DPMSolverMultistepScheduler.from_config(pipeline.scheduler.config)
-        pipeline = pipeline.to(accelerator.device)
-
-        # load attention processors
-        pipeline.unet.load_attn_procs(args.output_dir)
-
-        # run inference
-        if args.validation_prompt and args.num_validation_images > 0:
-            generator = torch.Generator(device=accelerator.device).manual_seed(args.seed) if args.seed else None
-            images = [
-                pipeline(args.validation_prompt, num_inference_steps=25, generator=generator).images[0]
-                for _ in range(args.num_validation_images)
-            ]
-
-            for tracker in accelerator.trackers:
-                if tracker.name == "tensorboard":
-                    np_images = np.stack([np.asarray(img) for img in images])
-                    tracker.writer.add_images("test", np_images, epoch, dataformats="NHWC")
-                if tracker.name == "wandb":
-                    tracker.log(
-                        {
-                            "test": [
-                                wandb.Image(image, caption=f"{i}: {args.validation_prompt}")
-                                for i, image in enumerate(images)
-                            ]
-                        }
-                    )
+        pipeline.save_pretrained(args.output_dir)
 
         if args.push_to_hub:
-            save_model_card(
-                repo_name,
-                images=images,
-                base_model=args.pretrained_model_name_or_path,
-                prompt=args.instance_prompt,
-                repo_folder=args.output_dir,
-            )
             repo.push_to_hub(commit_message="End of training", blocking=False, auto_lfs_prune=True)
 
     accelerator.end_training()

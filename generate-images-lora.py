@@ -22,7 +22,7 @@ def parse_args():
     parser.add_argument(
         "--output_folder",
         type=str,
-        default="./outputs",
+        default="./outputs/lora",
         help=("the path to folder to hold generated images"),
     )
 
@@ -45,10 +45,12 @@ def main():
 
     if torch.cuda.is_available():
         device = "cuda"
+        # if limited by GPU memory, chunking the attention computation in addition to using fp16
         pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', torch_dtype=torch.float16)
     else:
         device = "cpu"
-        pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5', torch_dtype=torch.float32)
+        # if on CPU or want to have maximum precision on GPU, use default full-precision setting
+        pipe = StableDiffusionPipeline.from_pretrained('runwayml/stable-diffusion-v1-5')  
     print(f'device is {device}')
 
     pipe.scheduler = DPMSolverMultistepScheduler.from_config(pipe.scheduler.config)
