@@ -214,7 +214,7 @@ accelerate launch train_dreambooth_lora.py \
   --pretrained_model_name_or_path=$MODEL_NAME  \
   --instance_data_dir=$INSTANCE_DIR \
   --output_dir=$OUTPUT_DIR \
-  --instance_prompt="a photo of sks woman" \
+  --instance_prompt="a photo of missdong woman" \
   --resolution=512 \
   --train_batch_size=1 \
   --gradient_accumulation_steps=1 \
@@ -223,12 +223,11 @@ accelerate launch train_dreambooth_lora.py \
   --lr_scheduler="constant" \
   --lr_warmup_steps=0 \
   --max_train_steps=500 \
-  --validation_prompt="A photo of sks woman running on on the great wall" \
+  --validation_prompt="A photo of missdong woman running on the great wall" \
   --validation_epochs=20 \
   --seed=42 \
   --report_to="wandb"
 ```
-
 
 
 generate images using LoRA weights:
