@@ -10,42 +10,31 @@ I copied the training scripts from the following repos and will periodically upd
 
 # Setup
 
+- Python version: tested with 3.9.11 and 3.10.9 (3.8.x may run into this error)
+- Pytorch version: tested with latest 1.13.1+cu117 (used 1.11.0 for my old 2080ti by running `pip install torch==1.11.0`)
+
 ```
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-- Python version: use 3.9.11 (3.8.x may run into this error)
-- Pytorch version: be default the latest 1.13.1 is installed but my 2080ti machine requires 1.11.0 (run `pip install torch==1.11.0`)
-
-2080ti
-
-- CUDA out of memory dreambooth with lora
-- lora finetune OK
-
-Tesla V100 32G
-
-
-Then, install [xformers](https://huggingface.co/docs/diffusers/optimization/xformers) and add `--enable_xformers_memory_efficient_attention`
+Optional: install [xformers](https://huggingface.co/docs/diffusers/optimization/xformers) and add `--enable_xformers_memory_efficient_attention`
 
 ```
 pip install pyre-extensions==0.0.23
 pip install -i https://test.pypi.org/simple/ formers==0.0.15.dev376
 ```
 
-login to HuggingFace using your token and login to WandB using your API key. If you won't want to use WandB, remove `--report_to=wandb` from all commands below.
+- login to HuggingFace using your token: `huggingface-cli login`
+- login to WandB using your API key: `wandb login`. If you won't want to use WandB, remove `--report_to=wandb` from all commands below.
 
-```
-huggingface-cli login
-wandb login
-```
 
 ## Full SD Fine-tuning with LoRA
 
 see [docs](https://huggingface.co/blog/lora)
 
-- Pokemon dataset
+- Pokemon dataset (took ~7.5 hours on 2080ti and ~4.5 hours on Tesla V100)
 
 ```
 export MODEL_NAME="runwayml/stable-diffusion-v1-5"
@@ -214,7 +203,7 @@ accelerate launch train_dreambooth_lora.py \
   --pretrained_model_name_or_path=$MODEL_NAME  \
   --instance_data_dir=$INSTANCE_DIR \
   --output_dir=$OUTPUT_DIR \
-  --instance_prompt="a photo of missdong woman" \
+  --instance_prompt="a photo of missdongsks girl" \
   --resolution=512 \
   --train_batch_size=1 \
   --gradient_accumulation_steps=1 \
@@ -222,8 +211,8 @@ accelerate launch train_dreambooth_lora.py \
   --learning_rate=1e-4 \
   --lr_scheduler="constant" \
   --lr_warmup_steps=0 \
-  --max_train_steps=500 \
-  --validation_prompt="A photo of missdong woman running on the great wall" \
+  --max_train_steps=1500 \
+  --validation_prompt="missdongsks epic haircut. hairstyling photography." \
   --validation_epochs=20 \
   --seed=42 \
   --report_to="wandb"
@@ -264,6 +253,34 @@ accelerate launch train_dreambooth.py \
 ```
 
 TODO: Dog example with prior-preservation loss
+
+
+Miss Dong example:
+
+```
+export MODEL_NAME="runwayml/stable-diffusion-v1-5"
+export INSTANCE_DIR="./data/dreambooth/missdong"
+export OUTPUT_DIR="./models/dreambooth-lora/missdong"
+
+accelerate launch train_dreambooth_lora.py \
+  --pretrained_model_name_or_path=$MODEL_NAME  \
+  --instance_data_dir=$INSTANCE_DIR \
+  --output_dir=$OUTPUT_DIR \
+  --instance_prompt="a photo of missdongsks girl" \
+  --resolution=512 \
+  --train_batch_size=1 \
+  --gradient_accumulation_steps=1 \
+  --checkpointing_steps=100 \
+  --learning_rate=1e-4 \
+  --lr_scheduler="constant" \
+  --lr_warmup_steps=0 \
+  --max_train_steps=1500 \
+  --validation_prompt="missdongsks epic haircut. hairstyling photography." \
+  --validation_epochs=20 \
+  --seed=42 \
+  --report_to="wandb"
+```
+
 
 generate images using Dreambooth models:
 
