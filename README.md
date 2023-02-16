@@ -17,6 +17,7 @@ I copied the training scripts from the following repos and will periodically upd
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+accelerate config default
 ```
 
 Optional: install [xformers](https://huggingface.co/docs/diffusers/optimization/xformers) and add `--enable_xformers_memory_efficient_attention`
@@ -28,6 +29,8 @@ pip install -i https://test.pypi.org/simple/ formers==0.0.15.dev376
 
 - login to HuggingFace using your token: `huggingface-cli login`
 - login to WandB using your API key: `wandb login`. If you won't want to use WandB, remove `--report_to=wandb` from all commands below.
+- you may need to do `export WANDB_DISABLE_SERVICE=true` to solve this [issue](https://github.com/wandb/wandb/issues/4872#issuecomment-1431823027)
+- If you have multiple GPU, you can set the following environment variable to choose which GPU to use (default is `CUDA_VISIBLE_DEVICES=0`): `export CUDA_VISIBLE_DEVICES=1`
 
 
 ## Full SD Fine-tuning with LoRA
@@ -260,9 +263,9 @@ Miss Dong example:
 ```
 export MODEL_NAME="runwayml/stable-diffusion-v1-5"
 export INSTANCE_DIR="./data/dreambooth/missdong"
-export OUTPUT_DIR="./models/dreambooth-lora/missdong"
+export OUTPUT_DIR="./models/dreambooth/missdong"
 
-accelerate launch train_dreambooth_lora.py \
+accelerate launch train_dreambooth.py \
   --pretrained_model_name_or_path=$MODEL_NAME  \
   --instance_data_dir=$INSTANCE_DIR \
   --output_dir=$OUTPUT_DIR \
@@ -270,14 +273,10 @@ accelerate launch train_dreambooth_lora.py \
   --resolution=512 \
   --train_batch_size=1 \
   --gradient_accumulation_steps=1 \
-  --checkpointing_steps=100 \
-  --learning_rate=1e-4 \
+  --learning_rate=5e-6 \
   --lr_scheduler="constant" \
   --lr_warmup_steps=0 \
-  --max_train_steps=1500 \
-  --validation_prompt="missdongsks epic haircut. hairstyling photography." \
-  --validation_epochs=20 \
-  --seed=42 \
+  --max_train_steps=400 \
   --report_to="wandb"
 ```
 
@@ -289,3 +288,4 @@ python generate-dreambooth.py --prompt "a dog standing on the great wall" --mode
 python generate-dreambooth.py --prompt "a sks dog standing on the great wall" --model_path "./models/dreambooth/dog" --output_folder "./outputs/dreambooth"
 python generate-dreambooth.py --prompt "a sks dog swimming"
 ```
+
