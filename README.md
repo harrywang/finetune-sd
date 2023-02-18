@@ -62,7 +62,7 @@ accelerate launch --mixed_precision="fp16"  train_text_to_image_lora.py \
   --report_to=wandb
 ```
 
-- Custom dataset, i.e., toy example using 15 photos of my cat Miles (took ~26 minutes on Tesla V100):
+- Custom dataset, i.e., toy example using 15 photos of my cat Miles (took ~40 minutes on Tesla V100):
 
 ```
 export MODEL_NAME="runwayml/stable-diffusion-v1-5"
@@ -76,12 +76,14 @@ accelerate launch --mixed_precision="fp16"  train_text_to_image_lora.py \
   --resolution=512 --center_crop --random_flip \
   --train_batch_size=1 \
   --gradient_accumulation_steps=4 \
-  --max_train_steps=1000 \
+  --max_train_steps=1500 \
   --learning_rate=1e-04 \
   --max_grad_norm=1 \
   --lr_scheduler="cosine" --lr_warmup_steps=0 \
   --output_dir=${OUTPUT_DIR} \
   --checkpointing_steps=500 \
+  --validation_prompt="A photo of a cat in a bucket" \
+  --validation_epochs=10 \
   --seed=42 \
   --report_to=wandb
 ```
@@ -181,19 +183,20 @@ accelerate launch train_dreambooth_lora.py \
   --instance_data_dir=$INSTANCE_DIR \
   --output_dir=$OUTPUT_DIR \
   --instance_prompt="a photo of sks cat" \
-  --resolution=512 \
+  --resolution=512 --center_crop \
   --train_batch_size=1 \
-  --gradient_accumulation_steps=1 \
+  --gradient_accumulation_steps=4 \
   --checkpointing_steps=100 \
   --learning_rate=1e-4 \
   --lr_scheduler="constant" \
   --lr_warmup_steps=0 \
-  --max_train_steps=500 \
-  --validation_prompt="A photo of sks cat standing on the great wall" \
-  --validation_epochs=20 \
+  --max_train_steps=1500 \
+  --validation_prompt="A photo of a sks cat in a bucket" \
+  --validation_epochs=10 \
   --seed=42 \
   --report_to="wandb"
 ```
+
 
 Miss Dong example:
 
@@ -206,7 +209,7 @@ accelerate launch train_dreambooth_lora.py \
   --pretrained_model_name_or_path=$MODEL_NAME  \
   --instance_data_dir=$INSTANCE_DIR \
   --output_dir=$OUTPUT_DIR \
-  --instance_prompt="a photo of missdongsks girl" \
+  --instance_prompt="a photo of sks lady" \
   --resolution=512 \
   --train_batch_size=1 \
   --gradient_accumulation_steps=1 \
@@ -215,7 +218,7 @@ accelerate launch train_dreambooth_lora.py \
   --lr_scheduler="constant" \
   --lr_warmup_steps=0 \
   --max_train_steps=1500 \
-  --validation_prompt="missdongsks epic haircut. hairstyling photography." \
+  --validation_prompt="oil painting of sks lady by the ocean" \
   --validation_epochs=20 \
   --seed=42 \
   --report_to="wandb"
@@ -269,7 +272,7 @@ accelerate launch train_dreambooth.py \
   --pretrained_model_name_or_path=$MODEL_NAME  \
   --instance_data_dir=$INSTANCE_DIR \
   --output_dir=$OUTPUT_DIR \
-  --instance_prompt="a photo of missdongsks girl" \
+  --instance_prompt="a photo of sks lady" \
   --resolution=512 \
   --train_batch_size=1 \
   --gradient_accumulation_steps=1 \
