@@ -8,3 +8,4 @@ torchvision
 pillow
 matplotlib
 wandb
+safetensors

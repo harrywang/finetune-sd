@@ -29,7 +29,7 @@ pip install -i https://test.pypi.org/simple/ formers==0.0.15.dev376
 
 - login to HuggingFace using your token: `huggingface-cli login`
 - login to WandB using your API key: `wandb login`. If you won't want to use WandB, remove `--report_to=wandb` from all commands below.
-- you may need to do `export WANDB_DISABLE_SERVICE=true` to solve this [issue](https://github.com/wandb/wandb/issues/4872#issuecomment-1431823027)
+- you may need to do `export WANDB_DISABLE_SERVICE=true` to solve this [issue](https://github.com/wandb/wandb/issues/4872)
 - If you have multiple GPU, you can set the following environment variable to choose which GPU to use (default is `CUDA_VISIBLE_DEVICES=0`): `export CUDA_VISIBLE_DEVICES=1`
 - FileNotFoundError: [Errno 2] No such file or directory: 'git-lfs': `sudo apt install git-lfs`
 
@@ -255,6 +255,32 @@ accelerate launch train_dreambooth_lora.py \
   --report_to="wandb"
 ```
 
+Another example:
+
+```
+export MODEL_NAME="runwayml/stable-diffusion-v1-5"
+export INSTANCE_DIR="./data/dreambooth/david-beckham"
+export OUTPUT_DIR="./models/dreambooth-lora/david-beckham"
+
+accelerate launch train_dreambooth_lora.py \
+  --pretrained_model_name_or_path=$MODEL_NAME  \
+  --instance_data_dir=$INSTANCE_DIR \
+  --output_dir=$OUTPUT_DIR \
+  --instance_prompt="a photo of dbsks man" \
+  --resolution=512 \
+  --train_batch_size=1 \
+  --gradient_accumulation_steps=1 \
+  --checkpointing_steps=100 \
+  --learning_rate=1e-4 \
+  --lr_scheduler="constant" \
+  --lr_warmup_steps=0 \
+  --max_train_steps=700 \
+  --validation_prompt="A photo of dbsks man, detailed faces, highres, RAW photo 8k uhd, dslr" \
+  --validation_epochs=10 \
+  --seed=42 \
+  --report_to="wandb"
+```
+
 --with_prior_preservation --prior_loss_weight=1.0 \
 
 generate images using LoRA weights:
@@ -319,4 +345,19 @@ python generate-dreambooth.py --prompt "a dog standing on the great wall" --mode
 python generate-dreambooth.py --prompt "a sks dog standing on the great wall" --model_path "./models/dreambooth/dog" --output_folder "./outputs/dreambooth"
 python generate-dreambooth.py --prompt "a sks dog swimming"
 ```
+
+## Convert Diffusers LoRA Weights for Automatic1111 WebUI
+
+The LoRA weights trained using Diffusers are saved in `.bin` or `.pkl` format, which must be converted to be used in Automatic1111 WebUI (see [here](https://github.com/huggingface/diffusers/issues/2326) for detailed discussions).
+
+As seen below, the trained LoRA weights are stored in `custom_checkpoint_0.pkl` or `pytorch_model.bin`:
+
+<img class="mx-auto" src="https://user-images.githubusercontent.com/595772/221718501-dc79a799-5fe5-4b9f-9b44-c19ac4103c06.png">
+
+<img class="mx-auto" src="https://user-images.githubusercontent.com/595772/221718531-10fe4999-0ee0-4e6f-abf4-d9fc069ec540.png">
+
+`convert-to-safetensors.py` can be used to convert `.bin` or `.pkl` files into `.safetensors` format, which can be used in WebUI (just put the converted the file in WebUI `models/Lora`). The script is adapted from the one written by [ignacfetser](https://github.com/ignacfetser). 
+
+Put this script in the same folder of `.bin` or `.pkl` file and run `python convert-to-safetensors.py --file checkpoint_file`
+
 
