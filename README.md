@@ -23,8 +23,7 @@ accelerate config default
 Optional: install [xformers](https://huggingface.co/docs/diffusers/optimization/xformers) and add `--enable_xformers_memory_efficient_attention`
 
 ```
-pip install pyre-extensions==0.0.23
-pip install -i https://test.pypi.org/simple/ formers==0.0.15.dev376
+pip install xformers
 ```
 
 - login to HuggingFace using your token: `huggingface-cli login`
