@@ -9,3 +9,4 @@ pillow
 matplotlib
 wandb
 safetensors
+git+https://github.com/cloneofsimo/lora.git

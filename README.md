@@ -345,6 +345,57 @@ python generate-dreambooth.py --prompt "a sks dog standing on the great wall" --
 python generate-dreambooth.py --prompt "a sks dog swimming"
 ```
 
+## Fine-tuning Stable diffusion with LoRA PTI
+
+Use this [repo](https://github.com/cloneofsimo/lora): `pip install git+https://github.com/cloneofsimo/lora.git`
+
+Use [LoRA PTI](https://github.com/cloneofsimo/lora/discussions/121)
+
+Try a 3d avatar style
+
+```
+export MODEL_NAME="runwayml/stable-diffusion-v1-5"
+export INSTANCE_DIR="./data/dreambooth/3d-avatar"
+export OUTPUT_DIR="./models/dreambooth/3d-avatar"
+
+lora_pti \
+  --pretrained_model_name_or_path=$MODEL_NAME  \
+  --instance_data_dir=$INSTANCE_DIR \
+  --output_dir=$OUTPUT_DIR \
+  --train_text_encoder \
+  --resolution=512 \
+  --train_batch_size=1 \
+  --gradient_accumulation_steps=4 \
+  --scale_lr \
+  --learning_rate_unet=1e-4 \
+  --learning_rate_text=1e-5 \
+  --learning_rate_ti=5e-4 \
+  --color_jitter \
+  --lr_scheduler="linear" \
+  --lr_warmup_steps=0 \
+  --placeholder_tokens="<s1>|<s2>" \
+  --use_template="style"\
+  --save_steps=100 \
+  --max_train_steps_ti=1000 \
+  --max_train_steps_tuning=1000 \
+  --perform_inversion=True \
+  --clip_ti_decay \
+  --weight_decay_ti=0.000 \
+  --weight_decay_lora=0.001\
+  --continue_inversion \
+  --continue_inversion_lr=1e-4 \
+  --device="cuda:0" \
+  --lora_rank=1 \
+  --use_template="style" \
+#  --use_face_segmentation_condition\
+```
+
+To use the trained LoRA weights in WebUI, you need to merge it with a base model:
+
+```
+lora_add runwayml/stable-diffusion-v1-5 ./models/dreambooth/3d-avatar/final_lora.safetensors ./output_merged.ckpt 0.7 --mode upl-ckpt-v2
+```
+
 ## Convert Diffusers LoRA Weights for Automatic1111 WebUI
 
 The LoRA weights trained using Diffusers are saved in `.bin` or `.pkl` format, which must be converted to be used in Automatic1111 WebUI (see [here](https://github.com/huggingface/diffusers/issues/2326) for detailed discussions).
